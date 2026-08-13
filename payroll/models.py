@@ -8,6 +8,9 @@ from location.models import Location
 from payment_cycle.models import PaymentCycle
 from contribution_plan.models import PaymentPlan
 from individual.models import Individual
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+
 
 
 class PayrollStatus(models.TextChoices):
@@ -60,7 +63,25 @@ class PaymentAdaptorHistory(HistoryModel):
 
 
 class BenefitConsumption(HistoryBusinessModel):
-    individual = models.ForeignKey(Individual, on_delete=models.DO_NOTHING)
+    recipient_id = models.CharField(max_length=255, blank=True, null=True)
+    recipient_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.DO_NOTHING,
+        null=True,
+        unique=False,
+        default=ContentType.objects.get_for_model(Individual).id,
+        related_name='benefit_consumption_recipient_type'
+    )
+    recipient = GenericForeignKey('recipient_type', 'recipient_id') 
+    benefit_plan_id = models.CharField(max_length=255, blank=True, null=True)
+    benefit_plan_type = models.ForeignKey(
+        ContentType, 
+        on_delete=models.DO_NOTHING,
+        null=True,
+        unique=False,
+        related_name='benefit_consumption_benefit_plan_type'
+    )
+    benefit_plan = GenericForeignKey('benefit_plan_type', 'benefit_plan_id') 
     photo = models.TextField(blank=True, null=True)
     code = models.CharField(max_length=255, blank=False, null=False)
     date_due = DateField(db_column='DateDue', null=True)
@@ -70,9 +91,38 @@ class BenefitConsumption(HistoryBusinessModel):
     status = models.CharField(
         max_length=100, choices=BenefitConsumptionStatus.choices, default=BenefitConsumptionStatus.ACCEPTED, null=False
     )
-
+    
     def __str__(self):
         return f"Benefit Consumption {self.code} - {self.receipt} - {self.amount}"
+    
+    
+    @property
+    def individual(self):
+        if self.recipient_type.model == 'individual':
+            return self.recipient
+        return None
+
+    @individual.setter
+    def individual(self, value):
+        if value is None:
+            self.recipient = None
+            self.recipient_type = None
+            self.recipient_id = None
+        else:
+            self.recipient = value
+            self.recipient_type = ContentType.objects.get_for_model(value)
+            self.recipient_id = value.id
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._original_recipient = instance.recipient
+        return instance
+
+    def save(self, *args, **kwargs):
+        if self._state.adding or self.recipient != self._original_recipient:
+            self.individual = self.recipient if isinstance(self.recipient, Individual) else None
+        super().save(*args, **kwargs)
 
 
 class BenefitAttachment(HistoryBusinessModel):
