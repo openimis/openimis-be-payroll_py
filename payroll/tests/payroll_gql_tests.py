@@ -19,12 +19,14 @@ from core.test_helpers import LogInHelper, create_test_role
 from core.models.openimis_graphql_test_case import openIMISGraphQLTestCase, BaseTestContext
 from payroll.schema import Query, Mutation
 from location.test_helpers import create_test_location
-from social_protection.models import BenefitPlan, Beneficiary, BeneficiaryStatus, ProjectStatus
+from social_protection.models import BenefitPlan, Beneficiary, BeneficiaryStatus, BeneficiaryProjectEnrollment, ProjectStatus
 from social_protection.tests.data import service_add_payload
 from social_protection.tests.test_helpers import create_project
 from location.test_helpers import create_basic_test_locations
+from django.test import override_settings
 
 
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True)
 class PayrollGQLTestCase(openIMISGraphQLTestCase):
 
     user = None
@@ -74,8 +76,15 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
         cls.village = create_test_location("V", custom_props={"code": "VILL-PAYROLL-01", "parent": cls.ward})
         cls.other_location = create_test_location("V", custom_props={"code": "VILL-OTHER-01"})
 
-        cls.project_1 = create_project("Payroll Project 1", cls.benefit_plan, cls.user.username, status=ProjectStatus.COMPLETED)
-        cls.project_2 = create_project("Payroll Project 2", cls.benefit_plan, cls.user.username, status=ProjectStatus.COMPLETED)
+        cls.project_1 = create_project(
+            "Payroll Project 1", cls.benefit_plan, cls.user.username,
+            allows_multiple_enrollments=True, status=ProjectStatus.COMPLETED,
+        )
+        cls.project_2 = create_project(
+            "Payroll Project 2", cls.benefit_plan, cls.user.username,
+            allows_multiple_enrollments=True, status=ProjectStatus.COMPLETED,
+        )
+        # Both projects allow multiple enrollments to support test_create_with_multi_project_enrollment_no_duplicates
 
         cls.individual = cls.__create_individual(location=None, able_bodied=True)
         cls.individual_2 = cls.__create_individual(location=cls.village, able_bodied=False)
@@ -92,7 +101,7 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
         cls.json_ext_able_bodied_true = """{"advanced_criteria": [{"custom_filter_condition": "able_bodied__boolean=True"}]}"""
         cls.includedUnpaid = False
 
-    def setup(self):
+    def setUp(self):
         payroll = self.payroll_from_db()
         if payroll:
             self.delete_payroll_and_check_bill(payroll)
@@ -107,7 +116,6 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             payment_cycle_id=self.payment_cycle.id,
             payment_point_id=self.payment_point.id,
             payment_method=self.payment_method,
-            status=self.status,
             date_valid_from=self.date_valid_from,
             date_valid_to=self.date_valid_to,
             is_deleted=False,
@@ -130,7 +138,6 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             "paymentPlanId": str(self.payment_plan.id),
             "paymentPointId": str(self.payment_point.id),
             "paymentMethod": self.payment_method,
-            "status": self.status,
             "dateValidFrom": self.date_valid_from,
             "dateValidTo": self.date_valid_to,
             "jsonExt": json_ext,
@@ -148,7 +155,6 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             self.payment_plan.id,
             self.payment_point.id,
             self.payment_method,
-            self.status,
             self.date_valid_from,
             self.date_valid_to,
         )
@@ -314,6 +320,50 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
         payroll = self.create_payroll("", self.json_ext_able_bodied_true)
         self.assertIsNone(payroll)
 
+    def test_create_with_multi_project_enrollment_no_duplicates(self):
+        """Regression test: beneficiary enrolled in multiple filtered projects should not be duplicated."""
+        # Create a beneficiary enrolled in BOTH project_1 AND project_2
+        multi_enrolled_individual = self.__create_individual(able_bodied=True)
+        multi_enrolled_beneficiary = Beneficiary(
+            individual=multi_enrolled_individual,
+            benefit_plan=self.benefit_plan,
+            json_ext=multi_enrolled_individual.json_ext,
+            status=BeneficiaryStatus.ACTIVE,
+        )
+        multi_enrolled_beneficiary.save(username=self.user.username)
+
+        enrollment_1 = BeneficiaryProjectEnrollment(
+            beneficiary=multi_enrolled_beneficiary,
+            project=self.project_1,
+        )
+        enrollment_1.save(username=self.user.username)
+        enrollment_2 = BeneficiaryProjectEnrollment(
+            beneficiary=multi_enrolled_beneficiary,
+            project=self.project_2,
+        )
+        enrollment_2.save(username=self.user.username)
+
+        # Filter by both projects - without distinct() this would duplicate the beneficiary
+        json_ext = json.dumps({
+            "filter_criteria": {
+                "project_ids": [str(self.project_1.id), str(self.project_2.id)]
+            }
+        })
+        payroll = self.create_payroll(f"{self.name}_multi_enroll", json_ext)
+        self.assertIsNotNone(payroll)
+
+        # Count benefits for the multi-enrolled beneficiary - should be exactly 1, not 2
+        payroll_benefits = PayrollBenefitConsumption.objects.filter(
+            payroll=payroll,
+            benefit__individual=multi_enrolled_individual,
+            is_deleted=False
+        )
+        self.assertEqual(
+            payroll_benefits.count(),
+            1,
+            "Beneficiary enrolled in multiple filtered projects should only generate one benefit"
+        )
+
     # def test_create_fail_due_to_one_bill_assigment(self):
     #     tmp_name = f"{self.name}-tmp"
     #     payroll_tmp = self.create_payroll(tmp_name, self.json_ext_able_bodied_true)
@@ -330,7 +380,6 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             "paymentCycleId": str(self.payment_cycle.id),
             "paymentPlanId": str(self.payment_plan.id),
             "paymentMethod": self.payment_method,
-            "status": PayrollStatus.PENDING_APPROVAL,
             "dateValidFrom": self.date_valid_from,
             "dateValidTo": self.date_valid_to,
             "jsonExt": self.json_ext_able_bodied_false,
@@ -460,10 +509,13 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             "benefit_plan": cls.benefit_plan,
             "json_ext": individual.json_ext,
             "status": BeneficiaryStatus.ACTIVE,
-            "project": project
         }
         beneficiary = Beneficiary(**object_data)
         beneficiary.save(username=cls.user.username)
+
+        enrollment = BeneficiaryProjectEnrollment(beneficiary=beneficiary, project=project)
+        enrollment.save(username=cls.user.username)
+
         return beneficiary
 
     @classmethod
