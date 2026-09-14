@@ -3,6 +3,7 @@ import os
 
 from django.apps import AppConfig
 
+from core.bootstrap import rerun_after_migrate, skip_without_database
 from core.custom_filters import CustomFilterRegistryPoint
 from payroll.payments_registry import PaymentsMethodRegistryPoint
 
@@ -138,35 +139,25 @@ class PayrollConfig(AppConfig):
             ]
         )
 
+    # ready() runs before migrations, so on a fresh database the table the trigger
+    # attaches to does not exist yet; _connect_migrate_signal retries it then.
+    @skip_without_database("benefit code trigger sync", logger)
     def _sync_benefit_trigger(self):
-        try:
-            from payroll.models import BenefitConsumption
-            from invoice.trigger_sync import sync_trigger
-            sync_trigger(
-                model=BenefitConsumption,
-                sequence_name='benefit_code_seq',
-                trigger_name='benefit_code_trigger',
-                code_column='code',
-                pattern=self.benefit_code_pattern or DEFAULT_CONFIG['benefit_code_pattern'],
-                pg_function_name='set_benefit_code',
-            )
-            PayrollConfig.benefit_trigger_synced = True
-        except Exception as e:
-            PayrollConfig.benefit_trigger_synced = False
-            logger.error(f"Benefit trigger sync failed: {e}", exc_info=True)
+        PayrollConfig.benefit_trigger_synced = False
+        from payroll.models import BenefitConsumption
+        from invoice.trigger_sync import sync_trigger
+        sync_trigger(
+            model=BenefitConsumption,
+            sequence_name='benefit_code_seq',
+            trigger_name='benefit_code_trigger',
+            code_column='code',
+            pattern=self.benefit_code_pattern or DEFAULT_CONFIG['benefit_code_pattern'],
+            pg_function_name='set_benefit_code',
+        )
+        PayrollConfig.benefit_trigger_synced = True
 
     def _connect_migrate_signal(self):
-        # ready() runs before migrations, so on a fresh database the table the trigger
-        # attaches to does not exist yet. Re-sync once migrations have created it.
-        from django.db.models.signals import post_migrate
-        post_migrate.connect(
-            self._on_post_migrate, sender=self,
-            dispatch_uid='payroll.benefit_code_trigger_post_migrate',
-        )
-
-    @staticmethod
-    def _on_post_migrate(sender, **kwargs):
-        sender._sync_benefit_trigger()
+        rerun_after_migrate(self, self._sync_benefit_trigger, "payroll.benefit_code_trigger_post_migrate")
 
     def _connect_config_signal(self):
         from django.db.models.signals import post_save
