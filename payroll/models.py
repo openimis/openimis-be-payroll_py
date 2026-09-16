@@ -8,6 +8,7 @@ from location.models import Location
 from payment_cycle.models import PaymentCycle
 from contribution_plan.models import PaymentPlan
 from individual.models import Individual
+from core.models import LocationScope, ParentScope
 
 
 class PayrollStatus(models.TextChoices):
@@ -30,6 +31,8 @@ class BenefitConsumptionStatus(models.TextChoices):
 
 
 class PaymentPoint(HistoryModel):
+    row_scope = LocationScope("location")
+
     name = models.CharField(max_length=255)
     location = models.ForeignKey(Location, models.DO_NOTHING)
     ppm = models.ForeignKey(User, models.DO_NOTHING, blank=True, null=True)
@@ -62,6 +65,8 @@ class PaymentAdaptorHistory(HistoryModel):
 
 
 class BenefitConsumption(HistoryBusinessModel):
+    row_scope = ParentScope("individual")
+
     individual = models.ForeignKey(Individual, on_delete=models.DO_NOTHING)
     photo = models.TextField(blank=True, null=True)
     code = models.CharField(max_length=255, blank=True, default='')
