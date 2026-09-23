@@ -5,22 +5,97 @@ from django.apps import AppConfig
 
 from core.bootstrap import rerun_after_migrate, skip_without_database
 from core.custom_filters import CustomFilterRegistryPoint
+from core.rights_declaration import RightsDeclaration
 from payroll.payments_registry import PaymentsMethodRegistryPoint
 
 logger = logging.getLogger(__name__)
 
 MODULE_NAME = 'payroll'
 
+# Rights, by entity then by action. The integers are those already deployed: none has
+# moved here.
+#
+# Two identifier sharings, deliberate and carried over as they stand:
+#
+#   * close, reject and delete are all 202004. Closing a payroll is not deleting it,
+#     nor is rejecting it, but the integer all three check today really is the delete
+#     one. Only the django names separate them, ready for the day each has its own
+#     integer.
+#   * makePayment is 202002, the create integer. A disbursement is not the creation of
+#     a payroll; same situation.
+#
+# The sharing is written down here rather than merely endured: `RightPermission.right_id`
+# is indexed but not unique, so several names may point at the same integer. Splitting
+# them for real requires new integers *and* a migration granting them to the roles
+# holding the old one - without which the split withdraws accesses. 202003 stays free
+# in the block and is the natural place for a future "update payroll" (sequence 01
+# query / 02 create / 03 update / 04 delete): that is why the gateway took 202005 and
+# not it.
+#
+# close / reject / makePayment / reconcile are business actions and keep their name:
+# having forced them into delete and create is exactly what produced the sharings
+# above.
+DJANGO_PERMS = {
+    "paymentPoint": {
+        "query": ("payroll.view_paymentpoint", 201001),
+        "create": ("payroll.add_paymentpoint", 201002),
+        "update": ("payroll.change_paymentpoint", 201003),
+        "delete": ("payroll.delete_paymentpoint", 201004),
+    },
+    "payroll": {
+        "query": ("payroll.view_payroll", 202001),
+        "create": ("payroll.add_payroll", 202002),
+        # No "update" action: no mutation modifies a payroll, it only moves forward
+        # through its state transitions below.
+        "delete": ("payroll.delete_payroll", 202004),
+        "close": ("payroll.close_payroll", 202004),
+        "reject": ("payroll.reject_payroll", 202004),
+        "makePayment": ("payroll.make_payment_payroll", 202002),
+    },
+    # Reading this configuration returns `payment_gateway_api_key`, the external
+    # gateway's credential: that is a right of its own, revocable on its own. There is
+    # no model behind it - it is a ModuleConfiguration entry - so the django name is
+    # purely declarative, like the others.
+    "paymentGatewayConfig": {
+        "query": ("payroll.view_paymentgatewayconfig", 202005),
+    },
+    "csvReconciliation": {
+        "query": ("payroll.view_csvreconciliationupload", 206001),
+        # 206002 carries the name "create" in the deployed config, but what it opens
+        # is the upload of the reconciliation file: the CsvReconciliationUpload row is
+        # only its trace, the effect bears on the payroll's benefits. Hence a business
+        # action, and not "create".
+        "reconcile": ("payroll.reconcile_csvreconciliationupload", 206002),
+    },
+}
+
+_PERM_CFG = {
+    "gql_payment_point_search_perms": ("paymentPoint", "query"),
+    "gql_payment_point_create_perms": ("paymentPoint", "create"),
+    "gql_payment_point_update_perms": ("paymentPoint", "update"),
+    "gql_payment_point_delete_perms": ("paymentPoint", "delete"),
+    "gql_payroll_search_perms": ("payroll", "query"),
+    "gql_payroll_create_perms": ("payroll", "create"),
+    "gql_payroll_delete_perms": ("payroll", "delete"),
+    "gql_payroll_close_perms": ("payroll", "close"),
+    "gql_payroll_reject_perms": ("payroll", "reject"),
+    "gql_payroll_make_payment_perms": ("payroll", "makePayment"),
+    "gql_payment_gateway_config_perms": ("paymentGatewayConfig", "query"),
+    "gql_csv_reconciliation_search_perms": ("csvReconciliation", "query"),
+    # A deployed key, so not renamed: it points at the "reconcile" action declared
+    # above.
+    "gql_csv_reconciliation_create_perms": ("csvReconciliation", "reconcile"),
+}
+
+RIGHTS = RightsDeclaration(MODULE_NAME, DJANGO_PERMS, _PERM_CFG)
+
+perms = RIGHTS.perms
+django_perms = RIGHTS.django_perm_names
+configured_perms = RIGHTS.configured
+require = RIGHTS.require
+
+
 DEFAULT_CONFIG = {
-    "gql_payment_point_search_perms": ["201001"],
-    "gql_payment_point_create_perms": ["201002"],
-    "gql_payment_point_update_perms": ["201003"],
-    "gql_payment_point_delete_perms": ["201004"],
-    "gql_payroll_search_perms": ["202001"],
-    "gql_payroll_create_perms": ["202002"],
-    "gql_payroll_delete_perms": ["202004"],
-    "gql_csv_reconciliation_search_perms": ["206001"],
-    "gql_csv_reconciliation_create_perms": ["206002"],
     "payroll_accept_event": "payroll.accept_payroll",
     "payroll_reconciliation_event": "payroll.payroll_reconciliation",
     "payroll_reject_event": "payroll.payroll_reject",
@@ -65,15 +140,27 @@ class PayrollConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = MODULE_NAME
 
-    gql_payment_point_search_perms = None
-    gql_payment_point_create_perms = None
-    gql_payment_point_update_perms = None
-    gql_payment_point_delete_perms = None
-    gql_payroll_search_perms = None
-    gql_payroll_create_perms = None
-    gql_payroll_delete_perms = None
-    gql_csv_reconciliation_search_perms = None
-    gql_csv_reconciliation_create_perms = None
+    # Rights: constants, no longer overridable. They go neither through DEFAULT_CFG
+    # nor through ready(): `ModuleConfiguration.get_or_default` now ignores any
+    # `_perms` key stored in the database. The values come from DJANGO_PERMS, written
+    # once only.
+    gql_payment_point_search_perms = RIGHTS.perms("paymentPoint", "query")
+    gql_payment_point_create_perms = RIGHTS.perms("paymentPoint", "create")
+    gql_payment_point_update_perms = RIGHTS.perms("paymentPoint", "update")
+    gql_payment_point_delete_perms = RIGHTS.perms("paymentPoint", "delete")
+
+    gql_payroll_search_perms = RIGHTS.perms("payroll", "query")
+    gql_payroll_create_perms = RIGHTS.perms("payroll", "create")
+    gql_payroll_delete_perms = RIGHTS.perms("payroll", "delete")
+    gql_payroll_close_perms = RIGHTS.perms("payroll", "close")
+    gql_payroll_reject_perms = RIGHTS.perms("payroll", "reject")
+    gql_payroll_make_payment_perms = RIGHTS.perms("payroll", "makePayment")
+
+    gql_payment_gateway_config_perms = RIGHTS.perms("paymentGatewayConfig", "query")
+
+    gql_csv_reconciliation_search_perms = RIGHTS.perms("csvReconciliation", "query")
+    gql_csv_reconciliation_create_perms = RIGHTS.perms("csvReconciliation", "reconcile")
+
     payroll_accept_event = None
     payroll_reconciliation_event = None
     payroll_reject_event = None

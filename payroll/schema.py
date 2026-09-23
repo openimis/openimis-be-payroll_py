@@ -265,8 +265,13 @@ class Query(graphene.ObjectType):
         return PaymentMethodListGQLType(gql_payment_methods)
 
     def resolve_payment_gateway_config(self, info):
+        # Returns `payment_gateway_api_key`: the external gateway's credential. No
+        # check existed at all, not even authentication.
+        Query._check_permissions(
+            info.context.user, PayrollConfig.gql_payment_gateway_config_perms
+        )
         return PaymentGatewayConfigGQLType(
-            base_url=PayrollConfig.payment_gateway_base_url,
+            base_url=PayrollConfig.gateway_base_url,
             api_key=PayrollConfig.payment_gateway_api_key,
             timeout=PayrollConfig.payment_gateway_timeout,
         )
