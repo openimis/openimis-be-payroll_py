@@ -122,6 +122,14 @@ This section details the configuration settings required for integrating with a 
 }
 ```
 
+### Reading the configuration through GraphQL
+
+The `paymentGatewayConfig` query returns `baseUrl`, `apiKey` and `timeout`. Because
+`apiKey` is the gateway credential, the query requires its own right,
+`payroll.payment_gateway_config` (202005), which is declared in `apps.py` as the
+`paymentGatewayConfig.query` action. None of the payroll rights (search, create,
+delete) grants it. An anonymous user, or a user without the right, gets `Unauthorized`.
+
 ### Integrating the Payment Gateway
 
 To integrate the payment gateway, you need to define a class that extends the `PaymentGatewayConnector` and implements the necessary methods to handle payment and reconciliation requests.

@@ -5,22 +5,64 @@ from django.apps import AppConfig
 
 from core.bootstrap import rerun_after_migrate, skip_without_database
 from core.custom_filters import CustomFilterRegistryPoint
+from core.rights_declaration import RightsDeclaration
 from payroll.payments_registry import PaymentsMethodRegistryPoint
 
 logger = logging.getLogger(__name__)
 
 MODULE_NAME = 'payroll'
 
+
+# Rights, by entity then by action. The django names are the ones catalogued in
+# permissions_map.json for the same ids.
+#
+# `paymentGatewayConfig.query` (202005) was catalogued but checked nowhere, and the
+# query it belongs to returned the gateway API key to any client. It gets its own
+# id rather than an alias onto a payroll right: reading an integration secret is
+# not part of running payrolls.
+DJANGO_PERMS = {
+    "paymentPoint": {
+        "query": ("payroll.payment_point_search", 201001),
+        "create": ("payroll.payment_point_create", 201002),
+        "update": ("payroll.payment_point_update", 201003),
+        "delete": ("payroll.payment_point_delete", 201004),
+    },
+    "payroll": {
+        "query": ("payroll.payroll_search", 202001),
+        "create": ("payroll.payroll_create", 202002),
+        "delete": ("payroll.payroll_delete", 202004),
+    },
+    "paymentGatewayConfig": {
+        "query": ("payroll.payment_gateway_config", 202005),
+    },
+    "csvReconciliation": {
+        "query": ("payroll.csv_reconciliation_search", 206001),
+        "create": ("payroll.csv_reconciliation_create", 206002),
+    },
+}
+
+_PERM_CFG = {
+    "gql_payment_point_search_perms": ("paymentPoint", "query"),
+    "gql_payment_point_create_perms": ("paymentPoint", "create"),
+    "gql_payment_point_update_perms": ("paymentPoint", "update"),
+    "gql_payment_point_delete_perms": ("paymentPoint", "delete"),
+    "gql_payroll_search_perms": ("payroll", "query"),
+    "gql_payroll_create_perms": ("payroll", "create"),
+    "gql_payroll_delete_perms": ("payroll", "delete"),
+    "gql_payment_gateway_config_query_perms": ("paymentGatewayConfig", "query"),
+    "gql_csv_reconciliation_search_perms": ("csvReconciliation", "query"),
+    "gql_csv_reconciliation_create_perms": ("csvReconciliation", "create"),
+}
+
+RIGHTS = RightsDeclaration(MODULE_NAME, DJANGO_PERMS, _PERM_CFG)
+
+perms = RIGHTS.perms
+django_perms = RIGHTS.django_perm_names
+configured_perms = RIGHTS.configured
+require = RIGHTS.require
+
+
 DEFAULT_CONFIG = {
-    "gql_payment_point_search_perms": ["201001"],
-    "gql_payment_point_create_perms": ["201002"],
-    "gql_payment_point_update_perms": ["201003"],
-    "gql_payment_point_delete_perms": ["201004"],
-    "gql_payroll_search_perms": ["202001"],
-    "gql_payroll_create_perms": ["202002"],
-    "gql_payroll_delete_perms": ["202004"],
-    "gql_csv_reconciliation_search_perms": ["206001"],
-    "gql_csv_reconciliation_create_perms": ["206002"],
     "payroll_accept_event": "payroll.accept_payroll",
     "payroll_reconciliation_event": "payroll.payroll_reconciliation",
     "payroll_reject_event": "payroll.payroll_reject",
@@ -65,15 +107,19 @@ class PayrollConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = MODULE_NAME
 
-    gql_payment_point_search_perms = None
-    gql_payment_point_create_perms = None
-    gql_payment_point_update_perms = None
-    gql_payment_point_delete_perms = None
-    gql_payroll_search_perms = None
-    gql_payroll_create_perms = None
-    gql_payroll_delete_perms = None
-    gql_csv_reconciliation_search_perms = None
-    gql_csv_reconciliation_create_perms = None
+    # Rights: constants, no longer overridable. They go neither through
+    # DEFAULT_CONFIG nor through ready(): `ModuleConfiguration.get_or_default`
+    # ignores any `_perms` key stored in the database.
+    gql_payment_point_search_perms = RIGHTS.perms("paymentPoint", "query")
+    gql_payment_point_create_perms = RIGHTS.perms("paymentPoint", "create")
+    gql_payment_point_update_perms = RIGHTS.perms("paymentPoint", "update")
+    gql_payment_point_delete_perms = RIGHTS.perms("paymentPoint", "delete")
+    gql_payroll_search_perms = RIGHTS.perms("payroll", "query")
+    gql_payroll_create_perms = RIGHTS.perms("payroll", "create")
+    gql_payroll_delete_perms = RIGHTS.perms("payroll", "delete")
+    gql_payment_gateway_config_query_perms = RIGHTS.perms("paymentGatewayConfig", "query")
+    gql_csv_reconciliation_search_perms = RIGHTS.perms("csvReconciliation", "query")
+    gql_csv_reconciliation_create_perms = RIGHTS.perms("csvReconciliation", "create")
     payroll_accept_event = None
     payroll_reconciliation_event = None
     payroll_reject_event = None
