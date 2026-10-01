@@ -10,7 +10,7 @@ from core.utils import append_validity_filter
 from invoice.gql.gql_types.bill_types import BillGQLType
 from invoice.models import Bill
 from location.services import get_ancestor_location_filter
-from payroll.apps import PayrollConfig
+from payroll.apps import PayrollConfig, require
 from payroll.gql_mutations import CreatePaymentPointMutation, UpdatePaymentPointMutation, DeletePaymentPointMutation, \
     CreatePayrollMutation, DeletePayrollMutation, ClosePayrollMutation, \
     RejectPayrollMutation, MakePaymentForPayrollMutation, DeleteBenefitConsumptionMutation, \
@@ -267,9 +267,10 @@ class Query(graphene.ObjectType):
     def resolve_payment_gateway_config(self, info):
         # Returns `payment_gateway_api_key`: the external gateway's credential. No
         # check existed at all, not even authentication.
-        Query._check_permissions(
-            info.context.user, PayrollConfig.gql_payment_gateway_config_perms
-        )
+        user = info.context.user
+        if type(user) is AnonymousUser or not user.id \
+                or not require(user, "paymentGatewayConfig", "query"):
+            raise PermissionError(_("Unauthorized"))
         return PaymentGatewayConfigGQLType(
             base_url=PayrollConfig.gateway_base_url,
             api_key=PayrollConfig.payment_gateway_api_key,
