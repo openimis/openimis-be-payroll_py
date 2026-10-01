@@ -8,7 +8,7 @@ from core.gql.gql_mutations.base_mutation import BaseHistoryModelCreateMutationM
     BaseHistoryModelUpdateMutationMixin, BaseHistoryModelDeleteMutationMixin
 from core.schema import OpenIMISMutation
 from payroll.apps import PayrollConfig
-from payroll.models import PaymentPoint, Payroll, PayrollMutation
+from payroll.models import BenefitConsumption, PaymentPoint, Payroll, PayrollMutation
 from payroll.services import PaymentPointService, PayrollService, BenefitConsumptionService
 
 
@@ -197,8 +197,10 @@ class ClosePayrollMutation(BaseHistoryModelDeleteMutationMixin, BaseMutation):
 
     @classmethod
     def _validate_mutation(cls, user, **data):
+        # Closing a payroll is not deleting it. Same id as delete for now, see
+        # PayrollConfig - only the name changes here.
         if type(user) is AnonymousUser or not user.has_perms(
-                PayrollConfig.gql_payroll_delete_perms):
+                PayrollConfig.gql_payroll_close_perms):
             raise ValidationError("mutation.authentication_required")
 
     @classmethod
@@ -227,7 +229,9 @@ class MakePaymentForPayrollMutation(BaseHistoryModelDeleteMutationMixin, BaseMut
     @classmethod
     def _validate_mutation(cls, user, **data):
         super()._validate_mutation(user, **data)
-        if not user.has_perms(PayrollConfig.gql_payroll_create_perms):
+        # This one moves money: it is a disbursement, not the creation of a payroll.
+        # Same id as create for now, see PayrollConfig.
+        if not user.has_perms(PayrollConfig.gql_payroll_make_payment_perms):
             raise ValidationError("mutation.authentication_required")
 
     @classmethod
@@ -255,8 +259,10 @@ class RejectPayrollMutation(BaseHistoryModelDeleteMutationMixin, BaseMutation):
 
     @classmethod
     def _validate_mutation(cls, user, **data):
+        # Rejecting a payroll is not deleting it. Same id as delete for now, see
+        # PayrollConfig - only the name changes here.
         if type(user) is AnonymousUser or not user.has_perms(
-                PayrollConfig.gql_payroll_delete_perms):
+                PayrollConfig.gql_payroll_reject_perms):
             raise ValidationError("mutation.authentication_required")
 
     @classmethod
@@ -280,7 +286,13 @@ class RejectPayrollMutation(BaseHistoryModelDeleteMutationMixin, BaseMutation):
 class DeleteBenefitConsumptionMutation(BaseHistoryModelDeleteMutationMixin, BaseMutation):
     _mutation_class = "DeleteBenefitConsumptionMutation"
     _mutation_module = "payroll"
-    _model = Payroll
+    # This mutation deletes BenefitConsumption rows, not Payroll ones; `_model`
+    # announced the latter. Without functional effect - `_model` is only read by the
+    # mixin's `__delete_single_obj` and `_object_not_exist_exception`, and `_mutate` is
+    # rewritten in full below and delegates to BenefitConsumptionService - but wrong
+    # for anyone looking up an action's right through its model
+    # (`core.rights_scope.has_model_right`).
+    _model = BenefitConsumption
 
     @classmethod
     def _validate_mutation(cls, user, **data):

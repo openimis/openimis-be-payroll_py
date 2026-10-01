@@ -11,9 +11,10 @@ from payroll.models import PaymentPoint, Payroll, BenefitConsumption, \
 from contribution_plan.gql import PaymentPlanGQLType
 from payment_cycle.gql_queries import PaymentCycleGQLType
 from social_protection.models import BenefitPlan
+from core.gql import ScopedQuerysetMixin
 
 
-class PaymentPointGQLType(DjangoObjectType):
+class PaymentPointGQLType(ScopedQuerysetMixin, DjangoObjectType):
     uuid = graphene.String(source='uuid')
 
     class Meta:
@@ -53,7 +54,7 @@ class BenefitAttachmentGQLType(DjangoObjectType):
         connection_class = ExtendedConnection
 
 
-class BenefitConsumptionGQLType(DjangoObjectType):
+class BenefitConsumptionGQLType(ScopedQuerysetMixin, DjangoObjectType):
     uuid = graphene.String(source='uuid')
     benefit_attachment = graphene.List(BenefitAttachmentGQLType)
 

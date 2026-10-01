@@ -1,23 +1,148 @@
-msgid "payroll.validation.payroll.bill_already_assigned"
-msgstr "Bills %(bill_ids) already assigned to payroll."
+#: payroll/gql_mutations.py:66 payroll/gql_mutations.py:89
+#: payroll/gql_mutations.py:112
+msgid "mutation.authentication_required"
+msgstr ""
 
-msgid "payroll.validation.payroll.no_bills_for_filter_criteria"
-msgstr "Bills not found for given search criteria."
+#: payroll/models.py:15
+msgid "GENERATING"
+msgstr ""
 
-msgid "payroll.validation.payroll.name_exists"
-msgstr "Name %(name) already exists."
+#: payroll/models.py:16
+msgid "PENDING_APPROVAL"
+msgstr ""
 
-msgid "payroll.validation.field_empty"
-msgstr "Field %(field) cannot be empty."
+#: payroll/models.py:17 payroll/models.py:26
+msgid "APPROVE_FOR_PAYMENT"
+msgstr ""
 
+#: payroll/models.py:18 payroll/models.py:27
+msgid "REJECTED"
+msgstr ""
+
+#: payroll/models.py:19 payroll/models.py:29
+msgid "RECONCILED"
+msgstr ""
+
+#: payroll/models.py:20
+msgid "FAILED"
+msgstr ""
+
+#: payroll/models.py:24
+msgid "ACCEPTED"
+msgstr ""
+
+#: payroll/models.py:25
+msgid "CREATED"
+msgstr ""
+
+#: payroll/models.py:28
+msgid "DUPLICATE"
+msgstr ""
+
+#: payroll/models.py:30
+msgid "PENDING_DELETION"
+msgstr ""
+
+#: payroll/models.py:110
+msgid "Triggered"
+msgstr ""
+
+#: payroll/models.py:111
+msgid "In progress"
+msgstr ""
+
+#: payroll/models.py:112
+msgid "Success"
+msgstr ""
+
+#: payroll/models.py:113
+msgid "Partial Success"
+msgstr ""
+
+#: payroll/models.py:114
+msgid "WAITING_FOR_VERIFICATION"
+msgstr ""
+
+#: payroll/models.py:115
+msgid "Fail"
+msgstr ""
+
+#: payroll/schema.py:188 payroll/services.py:251
+msgid "payroll.create.triggers_not_synced.admin"
+msgstr ""
+"Code generation triggers are not synchronized. Run 'python manage.py "
+"sync_code_triggers' or restart the server."
+
+#: payroll/schema.py:190 payroll/services.py:252
+msgid "payroll.create.triggers_not_synced"
+msgstr ""
+"Payroll creation is temporarily unavailable. Please contact your system "
+"administrator."
+
+#: payroll/schema.py:334
+msgid "Unauthorized"
+msgstr ""
+
+#: payroll/services.py:154
 msgid "payroll.retrigger.invalid_status"
 msgstr "Cannot retrigger payroll creation unless status is FAILED"
 
+#: payroll/services.py:158
 msgid "payroll.retrigger.creation_params_not_found"
 msgstr "Original creation parameters for this payroll could not be found."
 
-msgid "payroll.create.triggers_not_synced"
-msgstr "Payroll creation is temporarily unavailable. Please contact your system administrator."
+#: payroll/services.py:621
+msgid "csv_reconciliation.validation.file_required"
+msgstr ""
 
-msgid "payroll.create.triggers_not_synced.admin"
-msgstr "Code generation triggers are not synchronized. Run 'python manage.py sync_code_triggers' or restart the server."
+#: payroll/services.py:663
+msgid "Unknown error while loading import file"
+msgstr ""
+
+#: payroll/services.py:665
+msgid "Import file is empty"
+msgstr ""
+
+#: payroll/services.py:667
+msgid "Column errors in csv."
+msgstr ""
+
+#: payroll/services.py:670
+msgid "All of the Benefit Consumptions have been already reconciled."
+msgstr ""
+
+#: payroll/services.py:691
+msgid "benefit_consumption_not_found"
+msgstr ""
+
+#: payroll/services.py:694
+msgid "benefit_consumption_not_in_payroll"
+msgstr ""
+
+#: payroll/services.py:698
+msgid "paid_column_invalid_value"
+msgstr ""
+
+#: payroll/services.py:701
+msgid "receipt_required"
+msgstr ""
+
+#: payroll/services.py:704
+msgid "status_not_matching"
+msgstr ""
+
+#: payroll/validation.py:55
+msgid "payroll.validation.payroll.no_bills_for_filter_criteria"
+msgstr "Bills not found for given search criteria."
+
+#: payroll/validation.py:64
+msgid "payroll.validation.payroll.bill_already_assigned"
+msgstr "Bills %(bill_ids) already assigned to payroll."
+
+#: payroll/validation.py:74
+msgid "payroll.validation.payroll.name_exists"
+msgstr "Name %(name) already exists."
+
+#: payroll/validation.py:83
+msgid "payroll.validation.field_empty"
+msgstr "Field %(field) cannot be empty."

@@ -31,7 +31,7 @@ class PaymentGatewayConfigGQLTestCase(openIMISGraphQLTestCase):
     def setUpClass(cls):
         super().setUpClass()
         authorized_role = create_test_role(
-            perm_names=["gql_payment_gateway_config_query_perms"],
+            perm_names=["gql_payment_gateway_config_perms"],
             name="PaymentGatewayConfigAuthorizedRole",
         )
         # Holds every other payroll right: running payrolls does not grant the secret.
