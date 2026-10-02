@@ -2,32 +2,70 @@ import logging
 from celery import shared_task
 
 from core.models import User
-from payroll.models import Payroll, PayrollStatus, BenefitConsumptionStatus
-from payroll.strategies import StrategyOnlinePayment
+from payroll.models import (
+    Payroll,
+    PayrollStatus,
+    BenefitConsumptionStatus,
+)
 from payroll.payments_registry import PaymentMethodStorage
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task
-def send_requests_to_gateway_payment(payroll_id, user_id):
-    payroll = Payroll.objects.get(id=payroll_id)
-    strategy = PaymentMethodStorage.get_chosen_payment_method(payroll.payment_method)
-    if strategy:
+def create_payroll_benefits_task(payroll_id, user_id, obj_data):
+    from payroll.services import PayrollService
+    try:
         user = User.objects.get(id=user_id)
-        strategy.initialize_payment_gateway(payroll.payment_point)
-        strategy.make_payment_for_payroll(payroll, user)
+        payroll = Payroll.objects.get(id=payroll_id)
+        PayrollService(user)._create_payroll_benefits(payroll, dict(obj_data))
+    except Exception as exc:
+        logger.error(f"Error in create_payroll_benefits_task for payroll {payroll_id}: {exc}", exc_info=True)
+        raise
+
+
+@shared_task
+def send_requests_to_gateway_payment(payroll_id, user_id):
+    """Send an APPROVE_FOR_PAYMENT payroll through its strategy; returns what
+    the strategy's ``make_payment_for_payroll`` returns."""
+    payroll = Payroll.objects.get(id=payroll_id)
+    # The status is read when the task runs: only an approved, live payroll
+    # is sent to the gateway, whatever queued the task.
+    if payroll.is_deleted or payroll.status != PayrollStatus.APPROVE_FOR_PAYMENT:
+        logger.error(
+            "Payment of payroll %s refused: status %s%s; only an %s payroll is sent to the gateway.",
+            payroll_id, payroll.status, ", deleted" if payroll.is_deleted else "",
+            PayrollStatus.APPROVE_FOR_PAYMENT,
+        )
+        return None
+    strategy = PaymentMethodStorage.get_chosen_payment_method(payroll.payment_method)
+    if not strategy:
+        return None
+    user = User.objects.get(id=user_id)
+    strategy.initialize_payment_gateway(payroll.payment_point)
+    return strategy.make_payment_for_payroll(payroll, user)
 
 
 @shared_task
 def send_request_to_reconcile(payroll_id, user_id):
+    """Close a payroll through its own strategy: it becomes RECONCILED and the
+    strategy's gateway is asked about each APPROVE_FOR_PAYMENT benefit. A
+    strategy that leaves ``PAYMENT_GATEWAY`` None (an agency that pulls its
+    list) closes the payroll without asking any gateway. A payroll whose
+    strategy is not registered is left as it is."""
     payroll = Payroll.objects.get(id=payroll_id)
     user = User.objects.get(id=user_id)
-    strategy = StrategyOnlinePayment
+    strategy = PaymentMethodStorage.get_chosen_payment_method(payroll.payment_method)
+    if not strategy:
+        logger.error("Closing of payroll %s refused: no registered payment strategy %r.",
+                     payroll_id, payroll.payment_method)
+        return
     strategy.initialize_payment_gateway(payroll.payment_point)
     strategy.change_status_of_payroll(payroll, PayrollStatus.RECONCILED, user)
+    payment_gateway_connector = getattr(strategy, 'PAYMENT_GATEWAY', None)
+    if payment_gateway_connector is None:
+        return
     benefits = strategy.get_benefits_attached_to_payroll(payroll, BenefitConsumptionStatus.APPROVE_FOR_PAYMENT)
-    payment_gateway_connector = strategy.PAYMENT_GATEWAY
     benefits_to_reconcile = []
     for benefit in benefits:
         is_reconciled = payment_gateway_connector.reconcile(benefit.code, benefit.amount)
