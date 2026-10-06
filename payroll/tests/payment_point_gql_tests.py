@@ -10,7 +10,7 @@ from payroll.tests.data import gql_payment_point_query, gql_payment_point_delete
 from core.test_helpers import LogInHelper, create_test_role
 from payroll.schema import Query, Mutation
 from core.models.openimis_graphql_test_case import openIMISGraphQLTestCase, BaseTestContext
-from location.test_helpers import create_basic_test_locations
+from location.test_helpers import assign_user_districts, create_basic_test_locations
 
 
 class PaymentPointGQLTestCase(openIMISGraphQLTestCase):
@@ -50,6 +50,9 @@ class PaymentPointGQLTestCase(openIMISGraphQLTestCase):
         cls.gql_context = BaseTestContext(cls.user)
         cls.gql_context_unauthorized = BaseTestContext(cls.user_unauthorized)
         cls.location = Location.objects.filter(validity_to__isnull=True, type='V').first()
+        # Payment points are scoped by location, for writes as for reads: the
+        # authorised user works in the district of the village used below.
+        assign_user_districts(cls.user, [cls.location.parent.parent.code])
 
     def test_query(self):
         output = self.gql_client.execute(gql_payment_point_query, context=self.gql_context.get_request())

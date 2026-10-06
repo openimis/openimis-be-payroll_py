@@ -31,7 +31,10 @@ class BenefitConsumptionStatus(models.TextChoices):
 
 
 class PaymentPoint(HistoryModel):
-    row_scope = LocationScope("location")
+    # The location is picked at any level (usually a village). The default scope
+    # compares districts only, so a village never matched and no non-superuser
+    # could see or edit any payment point.
+    row_scope = LocationScope("location", loc_types=("R", "D", "W", "V"))
 
     name = models.CharField(max_length=255)
     location = models.ForeignKey(Location, models.DO_NOTHING)
