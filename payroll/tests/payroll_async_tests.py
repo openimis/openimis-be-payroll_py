@@ -1,7 +1,10 @@
 import uuid
+from unittest import mock
+
 from django.test import override_settings
 from payroll.models import Payroll, PayrollStatus, PayrollBenefitConsumption
 from payroll.services import PayrollService
+from payroll.tasks import create_payroll_benefits_task
 from payroll.tests.payroll_gql_tests import PayrollGQLTestCase
 from payroll.tests.data import gql_payroll_create, gql_payroll_retrigger
 
@@ -27,11 +30,13 @@ class PayrollAsyncTests(PayrollGQLTestCase):
             "clientMutationId": str(uuid.uuid4())
         }
 
-        output = self.gql_client.execute(
-            gql_payroll_create,
-            context=self.gql_context.get_request(),
-            variable_values=variables
-        )
+        # the task is queued once the payroll is committed (OP-3255)
+        with self.captureOnCommitCallbacks(execute=True):
+            output = self.gql_client.execute(
+                gql_payroll_create,
+                context=self.gql_context.get_request(),
+                variable_values=variables
+            )
         self.assertIsNone(output.get('errors'), f"Mutation errors: {output.get('errors')}")
 
         payroll = Payroll.objects.get(name=name)
@@ -73,11 +78,12 @@ class PayrollAsyncTests(PayrollGQLTestCase):
         payroll.save(username='username_authorized')
 
         variables = {"id": str(payroll.id)}
-        output = self.gql_client.execute(
-            gql_payroll_retrigger,
-            context=self.gql_context.get_request(),
-            variable_values=variables
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            output = self.gql_client.execute(
+                gql_payroll_retrigger,
+                context=self.gql_context.get_request(),
+                variable_values=variables
+            )
         self.assertIsNone(output.get('errors'), f"Retrigger errors: {output.get('errors')}")
 
         payroll.refresh_from_db()
@@ -94,14 +100,15 @@ class PayrollAsyncTests(PayrollGQLTestCase):
         Payroll.objects.filter(name=name).delete()
 
         service = PayrollService(self.user)
-        service.create({
-            "name": name,
-            "payment_plan_id": str(self.payment_plan.id),
-            "payment_point_id": str(self.payment_point.id),
-            "payment_method": self.payment_method,
-            "date_valid_from": self.date_valid_from,
-            "date_valid_to": self.date_valid_to,
-        })
+        with self.captureOnCommitCallbacks(execute=True):
+            service.create({
+                "name": name,
+                "payment_plan_id": str(self.payment_plan.id),
+                "payment_point_id": str(self.payment_point.id),
+                "payment_method": self.payment_method,
+                "date_valid_from": self.date_valid_from,
+                "date_valid_to": self.date_valid_to,
+            })
 
         payroll = Payroll.objects.filter(name=name, is_deleted=False).first()
         self.assertIsNotNone(payroll, "Payroll row must persist even after failed benefit generation")
@@ -158,3 +165,64 @@ class PayrollAsyncTests(PayrollGQLTestCase):
         self.assertFalse(result.get("success", True), "Expected retrigger to be rejected for non-FAILED payroll")
         payroll.refresh_from_db()
         self.assertEqual(payroll.status, PayrollStatus.PENDING_APPROVAL, "Status must not change")
+
+    # OP-3255: benefit generation was queued inside the mutation's transaction, so a
+    # free worker could look the payroll up before it was committed, fail with
+    # DoesNotExist and leave it GENERATING for good.
+
+    def _create_variables(self, name):
+        Payroll.objects.filter(name=name).delete()
+        return {
+            "name": name,
+            "paymentCycleId": str(self.payment_cycle.id),
+            "paymentPlanId": str(self.payment_plan.id),
+            "paymentPointId": str(self.payment_point.id),
+            "paymentMethod": self.payment_method,
+            "dateValidFrom": self.date_valid_from,
+            "dateValidTo": self.date_valid_to,
+            "jsonExt": self.json_ext_able_bodied_true,
+            "clientMutationId": str(uuid.uuid4())
+        }
+
+    def test_benefit_generation_is_queued_once_the_payroll_is_committed(self):
+        name = "AfterCommitPayrollTest"
+        with mock.patch("payroll.services.create_payroll_benefits_task.delay") as delay:
+            with self.captureOnCommitCallbacks() as callbacks:
+                output = self.gql_client.execute(
+                    gql_payroll_create,
+                    context=self.gql_context.get_request(),
+                    variable_values=self._create_variables(name),
+                )
+                self.assertIsNone(output.get('errors'), f"Mutation errors: {output.get('errors')}")
+                self.assertEqual(delay.call_count, 0, "queued before the transaction committed")
+            for callback in callbacks:
+                callback()
+
+        payroll = Payroll.objects.get(name=name)
+        delay.assert_called_once()
+        self.assertEqual(delay.call_args.args[0], str(payroll.id))
+
+    def test_generation_error_in_the_worker_marks_the_payroll_failed(self):
+        name = "WorkerFailurePayrollTest"
+        Payroll.objects.filter(name=name).delete()
+        payroll = Payroll(
+            name=name,
+            payment_plan=self.payment_plan,
+            payment_cycle=self.payment_cycle,
+            payment_point=self.payment_point,
+            payment_method=self.payment_method,
+            status=PayrollStatus.GENERATING,
+            date_valid_from=self.date_valid_from,
+            date_valid_to=self.date_valid_to,
+            json_ext={"creation_params": {"name": name}},
+        )
+        payroll.save(username='username_authorized')
+
+        with mock.patch.object(PayrollService, "_create_payroll_benefits", side_effect=ValueError("no beneficiaries")):
+            with self.assertRaises(ValueError):
+                create_payroll_benefits_task(str(payroll.id), str(self.user.id), {})
+
+        payroll.refresh_from_db()
+        self.assertEqual(payroll.status, PayrollStatus.FAILED, "a failed generation must be retriggerable")
+        self.assertIn("no beneficiaries", payroll.json_ext.get("creation_error", ""))
+        self.assertIn("creation_params", payroll.json_ext)

@@ -143,7 +143,10 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             "jsonExt": json_ext,
             "clientMutationId": str(uuid.uuid4())
         }
-        output = self.gql_client.execute(gql_payroll_create, context=self.gql_context.get_request(), variable_values=variables)
+        # benefit generation is queued once the payroll is committed (OP-3255)
+        with self.captureOnCommitCallbacks(execute=True):
+            output = self.gql_client.execute(gql_payroll_create, context=self.gql_context.get_request(),
+                                             variable_values=variables)
         self.assertEqual(output.get('errors'), None)
 
         return self.payroll_from_db(name)
@@ -158,7 +161,8 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
             self.date_valid_from,
             self.date_valid_to,
         )
-        output = self.gql_client.execute(payload, context=self.gql_context.get_request())
+        with self.captureOnCommitCallbacks(execute=True):
+            output = self.gql_client.execute(payload, context=self.gql_context.get_request())
         self.assertEqual(output.get('errors'), None)
 
         return self.payroll_from_db(name)
