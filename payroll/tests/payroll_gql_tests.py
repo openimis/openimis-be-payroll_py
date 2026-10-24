@@ -1,5 +1,6 @@
 import json
 import uuid
+from unittest.mock import patch
 from datetime import datetime, timedelta
 
 from graphene import Schema
@@ -422,6 +423,46 @@ class PayrollGQLTestCase(openIMISGraphQLTestCase):
         self.assertEqual(output.get('errors'), None)
         # FIXME self.assertTrue(Payroll.objects.filter(id=payroll.id, is_deleted=True).exists())
         # self.assertEqual(PayrollBill.objects.filter(payroll=payroll, bill=self.bill).count(), 0)
+
+    def _saved_delete_target(self):
+        payroll = Payroll(name=self.name,
+                          payment_plan_id=self.payment_plan.id,
+                          payment_point_id=self.payment_point.id,
+                          payment_cycle_id=self.payment_cycle.id,
+                          payment_method=self.payment_method,
+                          status=self.status,
+                          date_valid_from=self.date_valid_from,
+                          date_valid_to=self.date_valid_to,
+                          json_ext=json.loads(self.json_ext_able_bodied_false),
+                          )
+        payroll.save(user=self.user)
+        return payroll
+
+    def test_delete_reports_a_task_that_could_not_be_created(self):
+        # OP-3264: the mutation ignored the service result, so the log said SUCCESS
+        # even when no payroll_delete task was created.
+        from payroll.gql_mutations import DeletePayrollMutation
+        payroll = self._saved_delete_target()
+        failure = {"success": False, "message": "task refused", "detail": "no task group"}
+
+        with patch("payroll.services.TaskService.create", return_value=failure):
+            response = DeletePayrollMutation._mutate(self.user, ids=[str(payroll.id)])
+
+        self.assertIsNotNone(response, "a failed delete must not report success")
+        self.assertFalse(response.get("success", True), response)
+
+    def test_approved_delete_of_a_payroll_without_strategy_is_reported(self):
+        # OP-3264: with no strategy registered for the payment method, the approved
+        # delete did nothing and said nothing.
+        from payroll.signals import delete_approved_payroll
+        payroll = self._saved_delete_target()
+
+        with patch("payroll.signals.PaymentMethodStorage.get_chosen_payment_method", return_value=None), \
+                self.assertLogs("payroll.signals", level="ERROR") as logs:
+            delete_approved_payroll(payroll, self.user)
+
+        self.assertIn(str(payroll.id), "\n".join(logs.output))
+        self.assertTrue(Payroll.objects.filter(id=payroll.id, is_deleted=False).exists())
 
     def test_delete_unauthorized(self):
         payroll = Payroll(name=self.name,

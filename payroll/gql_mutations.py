@@ -184,7 +184,11 @@ class DeletePayrollMutation(BaseHistoryModelDeleteMutationMixin, BaseMutation):
         if ids:
             with transaction.atomic():
                 for id in ids:
-                    service.delete({'id': id, 'user': user})
+                    response = service.delete({'id': id, 'user': user})
+                    # a delete only creates its task: without one, nothing will happen (OP-3264)
+                    if not response.get('success', False):
+                        transaction.set_rollback(True)
+                        return response
 
     class Input(DeletePayrollInputType):
         pass

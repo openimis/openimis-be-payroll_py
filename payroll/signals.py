@@ -16,6 +16,19 @@ logger = logging.getLogger(__name__)
 imis_modules = openimis_apps()
 
 
+def delete_approved_payroll(payroll, user):
+    strategy = PaymentMethodStorage.get_chosen_payment_method(payroll.payment_method)
+    if not strategy:
+        # The task is COMPLETED, so nobody will retry: say why the payroll is still there (OP-3264).
+        logger.error(
+            "Payroll %s not deleted: no payment strategy is registered for its payment method '%s'",
+            payroll.id, payroll.payment_method,
+        )
+        return
+    strategy.remove_benefits_from_rejected_payroll(payroll=payroll)
+    PayrollService(user).delete_instance(payroll)
+
+
 def bind_service_signals():
     def on_task_complete_accept_payroll(**kwargs):
         def accept_payroll(payroll, strategy, user):
@@ -82,11 +95,6 @@ def bind_service_signals():
             logger.error("Error while executing on_task_complete_reject_approved_payroll", exc_info=exc)
 
     def on_task_delete_payroll(**kwargs):
-        def delete_payroll(payroll, user):
-            strategy = PaymentMethodStorage.get_chosen_payment_method(payroll.payment_method)
-            if strategy:
-                strategy.remove_benefits_from_rejected_payroll(payroll=payroll)
-                PayrollService(user).delete_instance(payroll)
         try:
             result = kwargs.get('result', None)
             task = result['data']['task']
@@ -97,7 +105,7 @@ def bind_service_signals():
                 task_status = task['status']
                 if task_status == Task.Status.COMPLETED:
                     payroll = Payroll.objects.get(id=task['entity_id'])
-                    delete_payroll(payroll, user)
+                    delete_approved_payroll(payroll, user)
         except Exception as exc:
             logger.error("Error while executing on_task_complete_delete_payroll", exc_info=exc)
 

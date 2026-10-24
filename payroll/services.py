@@ -134,7 +134,7 @@ class PayrollService(BaseService):
     def delete(self, obj_data):
         payroll_to_delete = Payroll.objects.get(id=obj_data['id'])
         data = {'id': payroll_to_delete.id}
-        TaskService(self.user).create({
+        return TaskService(self.user).create({
             'source': 'payroll_delete',
             'entity': payroll_to_delete,
             'status': Task.Status.RECEIVED,
