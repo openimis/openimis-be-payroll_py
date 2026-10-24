@@ -133,6 +133,10 @@ DEFAULT_CONFIG = {
     "receipt_length": 8,
     "benefit_code_pattern": "BEN-[YY]-[SEQ:10]",
     "bulk_create_batch_size": 500,
+    # Payroll statuses a deployment adds between generation and PENDING_APPROVAL,
+    # such as a verification step. No agency has been asked to pay a payroll in
+    # such a status, so its deletion is not checked for payments.
+    "pre_approval_payroll_statuses": [],
 }
 
 
@@ -187,6 +191,7 @@ class PayrollConfig(AppConfig):
     receipt_length = None
     benefit_code_pattern = None
     bulk_create_batch_size = None
+    pre_approval_payroll_statuses = None
     benefit_trigger_synced = False
 
     def ready(self):
