@@ -105,6 +105,7 @@ class PayrollService(BaseService):
     def create(self, obj_data):
         try:
             self._check_triggers_synced()
+            self._check_payment_plan_has_programme(obj_data)
             obj_data = self._adjust_create_payload(obj_data)
 
             obj_data['status'] = PayrollStatus.GENERATING
@@ -240,6 +241,20 @@ class PayrollService(BaseService):
             payroll.json_ext = {**(payroll.json_ext or {}), 'creation_error': str(task_exc)}
             payroll.save(username=self.user.login_name)
             raise
+
+    @staticmethod
+    def _check_payment_plan_has_programme(obj_data):
+        """
+        A payroll pays the beneficiaries of the payment plan's programme. A payment plan
+        linked to an insurance product has none: the payroll was saved, then failed
+        generation with "'Product' object has no attribute 'type'" (OP-3263).
+        """
+        payment_plan_id = obj_data.get('payment_plan_id')
+        if not payment_plan_id:
+            return
+        payment_plan = PaymentPlan.objects.filter(id=payment_plan_id).first()
+        if payment_plan and not isinstance(payment_plan.benefit_plan, BenefitPlan):
+            raise ValueError(_("payroll.create.payment_plan_without_programme"))
 
     def _check_triggers_synced(self):
         from invoice.apps import InvoiceConfig

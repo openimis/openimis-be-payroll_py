@@ -2,6 +2,7 @@ import uuid
 from django.test import override_settings
 from payroll.models import Payroll, PayrollStatus, PayrollBenefitConsumption
 from payroll.services import PayrollService
+from contribution_plan.tests.helpers import create_test_payment_plan
 from payroll.tests.payroll_gql_tests import PayrollGQLTestCase
 from payroll.tests.data import gql_payroll_create, gql_payroll_retrigger
 
@@ -158,3 +159,27 @@ class PayrollAsyncTests(PayrollGQLTestCase):
         self.assertFalse(result.get("success", True), "Expected retrigger to be rejected for non-FAILED payroll")
         payroll.refresh_from_db()
         self.assertEqual(payroll.status, PayrollStatus.PENDING_APPROVAL, "Status must not change")
+
+    def test_create_payroll_on_a_product_payment_plan_is_refused(self):
+        """OP-3263: a payment plan linked to an insurance product has no programme to
+        draw beneficiaries from; the payroll used to be saved, then fail generation
+        with "'Product' object has no attribute 'type'"."""
+        name = "ProductPlanPayrollTest"
+        Payroll.objects.filter(name=name).delete()
+        product_plan = create_test_payment_plan()
+
+        result = PayrollService(self.user).create({
+            "name": name,
+            "payment_plan_id": str(product_plan.id),
+            "payment_point_id": str(self.payment_point.id),
+            "payment_method": self.payment_method,
+            "date_valid_from": self.date_valid_from,
+            "date_valid_to": self.date_valid_to,
+        })
+
+        self.assertFalse(result.get("success", True), result)
+        self.assertIn(
+            "payroll.create.payment_plan_without_programme",
+            str(result.get("detail", "")) + str(result.get("message", "")),
+        )
+        self.assertFalse(Payroll.objects.filter(name=name).exists(), "nothing may be saved")
