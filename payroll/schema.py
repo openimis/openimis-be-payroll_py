@@ -178,7 +178,13 @@ class Query(graphene.ObjectType):
         return gql_optimizer.query(BenefitAttachment.objects.filter(*filters), info)
 
     def resolve_payroll_system_status(self, info, **kwargs):
-        Query._check_permissions(info.context.user, PayrollConfig.gql_payroll_search_perms)
+        # Whoever may create a payroll needs it: the page blocks creation while the
+        # triggers are not synced (OP-3268). It tells nothing about any payroll.
+        user = info.context.user
+        may_create = type(user) is not AnonymousUser and user.id \
+            and user.has_perms(PayrollConfig.gql_payroll_create_perms)
+        if not may_create:
+            Query._check_permissions(user, PayrollConfig.gql_payroll_search_perms)
         from invoice.apps import InvoiceConfig
         synced = getattr(InvoiceConfig, 'bill_trigger_synced', True) and PayrollConfig.benefit_trigger_synced
         message = None
