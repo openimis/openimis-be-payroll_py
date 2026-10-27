@@ -79,6 +79,12 @@ msgstr ""
 "Payroll creation is temporarily unavailable. Please contact your system "
 "administrator."
 
+#: payroll/services.py
+msgid "payroll.create.payment_plan_without_programme"
+msgstr ""
+"This payment plan is not linked to a programme: a payroll can only be "
+"created for the beneficiaries of a programme."
+
 #: payroll/schema.py:334
 msgid "Unauthorized"
 msgstr ""
