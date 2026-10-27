@@ -50,6 +50,12 @@ from tasks_management.services import TaskService, _get_std_task_data_payload
 logger = logging.getLogger(__name__)
 
 
+def pre_approval_payroll_statuses():
+    """The statuses a deployment declares between generation and PENDING_APPROVAL
+    (PayrollConfig.pre_approval_payroll_statuses), read when called."""
+    return tuple(PayrollConfig.pre_approval_payroll_statuses or ())
+
+
 class PaymentPointService(BaseService):
     OBJECT_TYPE = PaymentPoint
 
@@ -130,10 +136,45 @@ class PayrollService(BaseService):
     def update(self, obj_data):
         raise NotImplementedError()
 
+    @staticmethod
+    def statuses_deletable_unchecked():
+        """Statuses under which no agency has been asked to pay the payroll yet,
+        the pre-approval statuses a deployment declares included."""
+        return (
+            PayrollStatus.GENERATING, *pre_approval_payroll_statuses(),
+            PayrollStatus.PENDING_APPROVAL, PayrollStatus.FAILED,
+        )
+
     @check_authentication
     @register_service_signal('payroll_service.delete')
     def delete(self, obj_data):
-        payroll_to_delete = Payroll.objects.get(id=obj_data['id'])
+        """Create the deletion task of a payroll.
+
+        A payroll already deleted, or one an agency may have paid from as a
+        whole (its strategy's ``payroll_paid_reason``), is refused
+        (ValueError). A payroll in any status but
+        ``statuses_deletable_unchecked()`` is put up for deletion only when
+        none of its benefits may have been paid (its strategy's
+        ``sent_benefit_reasons``); otherwise ValueError. The approved task
+        checks again under lock (``delete_payroll``).
+        """
+        # .all(): the manager's get() and filter() on an id may answer from a cache
+        # that a queryset update or delete leaves stale; this guard reads the database.
+        payroll_to_delete = Payroll.objects.all().get(id=obj_data['id'])
+        if payroll_to_delete.is_deleted:
+            raise ValueError(f"Payroll {payroll_to_delete.id} is already deleted.")
+        strategy = self._strategy(payroll_to_delete)
+        paid = strategy.payroll_paid_reason(payroll_to_delete)
+        if paid:
+            raise ValueError(f"Payroll {payroll_to_delete.id} is not deleted: {paid}.")
+        if payroll_to_delete.status not in self.statuses_deletable_unchecked():
+            sent = self._sent_benefit_reasons(payroll_to_delete, strategy)
+            if sent:
+                raise ValueError(
+                    f"Payroll {payroll_to_delete.id} is {payroll_to_delete.status} and "
+                    f"{len(sent)} of its benefit(s) may have been paid "
+                    f"({', '.join(sorted(set(sent.values())))}); it is not deleted."
+                )
         data = {'id': payroll_to_delete.id}
         return TaskService(self.user).create({
             'source': 'payroll_delete',
@@ -143,6 +184,25 @@ class PayrollService(BaseService):
             'business_event': PayrollConfig.payroll_delete_event,
             'data': _get_std_task_data_payload(data)
         })
+
+    @staticmethod
+    def _strategy(payroll):
+        """The payroll's registered strategy, or the base interface."""
+        from payroll.payments_registry import PaymentMethodStorage
+        from payroll.strategies import StrategyOfPaymentInterface
+
+        return (PaymentMethodStorage.get_chosen_payment_method(payroll.payment_method)
+                or StrategyOfPaymentInterface)
+
+    @staticmethod
+    def _sent_benefit_reasons(payroll, strategy):
+        """{benefit id: reason} for the payroll's benefits an agency may have
+        paid, as ``strategy`` reads them."""
+        benefits = list(BenefitConsumption.objects.all().filter(
+            id__in=PayrollBenefitConsumption.objects.filter(payroll=payroll).values('benefit_id'),
+            is_deleted=False,
+        ))
+        return strategy.sent_benefit_reasons(benefits)
 
     @check_authentication
     @register_service_signal('payroll_service.retrigger_creation')
