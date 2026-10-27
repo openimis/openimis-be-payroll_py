@@ -22,6 +22,11 @@ def create_payroll_benefits_task(payroll_id, user_id, obj_data):
         PayrollService(user)._create_payroll_benefits(payroll, dict(obj_data))
     except Exception as exc:
         logger.error(f"Error in create_payroll_benefits_task for payroll {payroll_id}: {exc}", exc_info=True)
+        # A payroll left GENERATING can be neither retriggered nor deleted (OP-3255).
+        payroll = Payroll.objects.filter(id=payroll_id).first()
+        user = User.objects.filter(id=user_id).first()
+        if payroll and user:
+            PayrollService(user).mark_creation_failed(payroll, exc)
         raise
 
 

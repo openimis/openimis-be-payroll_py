@@ -290,17 +290,29 @@ class PayrollService(BaseService):
         send_requests_to_gateway_payment.delay(str(payroll_id), str(self.user.id))
 
     def _enqueue_benefit_generation(self, payroll, obj_data):
-        """Dispatch Celery task for benefit generation. Marks payroll FAILED on enqueue failure."""
-        try:
-            create_payroll_benefits_task.delay(
-                str(payroll.id), str(self.user.id), dict(obj_data)
-            )
-        except Exception as task_exc:
-            logger.error(f"Failed to enqueue benefit generation for payroll {payroll.id}: {task_exc}", exc_info=True)
-            payroll.status = PayrollStatus.FAILED
-            payroll.json_ext = {**(payroll.json_ext or {}), 'creation_error': str(task_exc)}
-            payroll.save(username=self.user.login_name)
-            raise
+        """
+        Dispatch the Celery task for benefit generation once the payroll is committed.
+        The mutation runs inside a transaction, so a task queued straight away could be
+        picked up by a free worker before the commit, miss the payroll and leave it
+        GENERATING for good (OP-3255). Marks the payroll FAILED on dispatch failure.
+        """
+        payroll_id, user_id, data = str(payroll.id), str(self.user.id), dict(obj_data)
+
+        def dispatch():
+            try:
+                create_payroll_benefits_task.delay(payroll_id, user_id, data)
+            except Exception as task_exc:
+                logger.error(f"Failed to enqueue benefit generation for payroll {payroll_id}: {task_exc}",
+                             exc_info=True)
+                self.mark_creation_failed(payroll, task_exc)
+
+        transaction.on_commit(dispatch)
+
+    def mark_creation_failed(self, payroll, error):
+        """Leave the payroll FAILED, with the error, so that it can be retriggered."""
+        payroll.status = PayrollStatus.FAILED
+        payroll.json_ext = {**(payroll.json_ext or {}), 'creation_error': str(error)}
+        payroll.save(username=self.user.login_name)
 
     @staticmethod
     def _check_payment_plan_has_programme(obj_data):
